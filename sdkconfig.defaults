@@ -29,3 +29,15 @@ CONFIG_ZB_ENABLED=y
 CONFIG_ZB_ZCZR=y
 # end of Zboss
 # end of Component config
+
+#
+# Zigbee radio (native 802.15.4 on the ESP32-C6). The device joins as a Router,
+# which needs the ZCZR library selected above.
+#
+CONFIG_ZB_RADIO_NATIVE=y
+
+#
+# OTA: a freshly installed image must confirm itself (after rejoining the network),
+# otherwise the bootloader returns to the previous one. Needs the bootloader flashed once over USB.
+#
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
