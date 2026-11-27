@@ -1,0 +1,13 @@
+[
+  {
+    "fileName": "espServoBlind-1.3.0.ota",
+    "fileVersion": 16973825,
+    "fileSize": 655566,
+    "url": "espServoBlind-1.3.0.ota",
+    "imageType": 21314,
+    "manufacturerCode": 4891,
+    "sha512": "18b438357996e5176ffb4a04630562300e9770de31a866784b59795b16466977406e8671d8eba498b0367e2d68fa6d3aa4ae465285b7001af121837268d75dee",
+    "otaHeaderString": "espServoBlind 1.3.0",
+    "modelId": "espServoBlind"
+  }
+]
