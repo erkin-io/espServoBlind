@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>espServoBlind USB</title>
+<style>
+:root{--bg:#f4f4f2;--card:#fff;--text:#1c1c1a;--muted:#6d6c66;--border:#d9d8d2;--go:#178a63;--stop:#c93a2b;--fb:#1763b0;--cmd:#c07a12;--grid:#e8e7e2}
+@media (prefers-color-scheme:dark){:root{--bg:#191918;--card:#242423;--text:#eeede8;--muted:#a09f98;--border:#3a3937;--go:#3cc096;--stop:#e8695b;--fb:#6fb0f0;--cmd:#e6a544;--grid:#32312f}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.4 system-ui,"Segoe UI",sans-serif}
+main{max-width:900px;margin:0 auto;padding:16px;display:grid;gap:12px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.nums{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.lab{color:var(--muted);font-size:13px}
+.num{font-size:40px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1.1}
+.num small{font-size:16px;font-weight:400;color:var(--muted)}
+#fb{color:var(--fb)}#cmd{color:var(--cmd)}
+button,select{font:inherit;border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:10px;padding:10px 16px;cursor:pointer}
+button:disabled,input:disabled{opacity:.4;cursor:default}
+#on{background:var(--go);border-color:var(--go);color:#fff;font-weight:600}
+#stop{background:var(--stop);border-color:var(--stop);color:#fff;font-weight:700;padding:10px 34px}
+#slider{width:100%;height:36px;margin:14px 0 4px}
+.ends{display:flex;justify-content:space-between;color:var(--muted);font-size:13px}
+canvas{width:100%;height:260px;display:block}
+#msg{min-height:22px;color:var(--muted);font-size:14px}
+#msg.warn,#setmsg.warn{color:var(--stop);font-weight:600}
+#state{font-size:14px;color:var(--muted)}
+table{border-collapse:collapse;width:100%;margin-top:10px;font-size:14px}
+td{padding:4px 8px;border-top:1px solid var(--border)}
+td{vertical-align:top}
+td:first-child{color:var(--muted);width:22%;white-space:nowrap}
+#infotable td:nth-child(2){width:24%;font-weight:600}
+input[type=number]{font:inherit;width:70px;padding:8px;border:1px solid var(--border);border-radius:10px;background:var(--card);color:var(--text)}
+h2{font-size:16px;margin:0 0 10px}
+</style>
+</head>
+<body>
+<main>
+  <div class="row">
+    <button id="connect">Connect</button>
+    <button id="disconnect" disabled>Disconnect</button>
+    <span id="state">Not connected</span>
+  </div>
+
+  <div class="card nums">
+    <div><div class="lab">Feedback</div><div class="num" id="fb">–<small> V</small></div></div>
+    <div><div class="lab">Command</div><div class="num" id="cmd">off</div></div>
+    <div><div class="lab">Noise (last second)</div><div class="num" id="noise">–<small> mV</small></div></div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <button id="on" disabled>Motor ON</button>
+      <button id="stop" disabled>STOP</button>
+      <button class="step" data-d="-50" disabled>−50</button>
+      <button class="step" data-d="-10" disabled>−10</button>
+      <button class="step" data-d="10" disabled>+10</button>
+      <button class="step" data-d="50" disabled>+50</button>
+      <label class="lab">Speed
+        <select id="speed" disabled>
+          <option value="60">Very slow</option>
+          <option value="200" selected>Slow</option>
+          <option value="500">Fast</option>
+        </select>
+      </label>
+      <button id="cal" disabled style="margin-left:auto">Auto calibrate</button>
+    </div>
+    <input id="slider" type="range" min="400" max="2600" step="5" value="1500" disabled>
+    <div class="ends"><span>400 µs</span><span id="target">target –</span><span>2600 µs</span></div>
+    <div id="msg"></div>
+    <div id="calres" class="lab"></div>
+  </div>
+
+  <div class="card">
+    <canvas id="chart"></canvas>
+    <div class="row" style="margin-top:8px">
+      <span class="lab"><b style="color:var(--fb)">━</b> feedback (V, left) &nbsp; <b style="color:var(--cmd)">━</b> command (µs, right) &nbsp; last 20 s</span>
+      <button id="save" style="margin-left:auto;padding:6px 12px">Save CSV</button>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Device</h2>
+    <div class="row">
+      <button id="info" class="dev" disabled>Refresh</button>
+      <button id="fbon" class="dev" disabled>Feedback on</button>
+      <button id="fboff" class="dev" disabled>Feedback off</button>
+      <button id="seto" class="dev" disabled>Set open position here</button>
+      <button id="setc" class="dev" disabled>Set closed position here</button>
+      <label class="lab">Go to <input id="pct" type="number" min="0" max="100" value="50"> %</label>
+      <button id="go" class="dev" disabled>Go</button>
+    </div>
+    <p class="lab" style="margin:8px 0 0">"Set ... position here": switch the motor off, move the cover by hand, then press. "Go" is a normal move, as from Zigbee. The Zigbee network key is never shown.</p>
+    <h2 style="margin-top:16px">Settings</h2>
+    <div class="row">
+      <label class="lab">Open position (0 %) <input id="set_servo_min_us" class="setting" type="number" min="500" max="2500" style="width:90px"> µs</label>
+      <button class="dev fromslider" data-key="servo_min_us" disabled>Copy value from slider</button>
+      <button class="dev saveset" data-key="servo_min_us" disabled>Save</button>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <label class="lab">Closed position (100 %) <input id="set_servo_max_us" class="setting" type="number" min="500" max="2500" style="width:90px"> µs</label>
+      <button class="dev fromslider" data-key="servo_max_us" disabled>Copy value from slider</button>
+      <button class="dev saveset" data-key="servo_max_us" disabled>Save</button>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <label class="lab">Speed <input id="set_move_speed_ms" class="setting" type="number" min="0" max="1000" style="width:90px"> ms for each 1 %</label>
+      <button class="dev saveset" data-key="move_speed_ms" disabled>Save</button>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <label class="lab">Motor-off delay <input id="set_idle_timeout_ms" class="setting" type="number" min="0" max="10000" style="width:90px"> ms</label>
+      <button class="dev saveset" data-key="idle_timeout_ms" disabled>Save</button>
+    </div>
+    <p class="lab" style="margin:8px 0 0">The same settings as in Zigbee2MQTT, saved in the device. "Save" does not move the servo: the next move uses the new value. "Copy value from slider" puts the pulse of the slider above into the box, so you can find a position with Motor ON and then save it. Pulses: 500 to 2500. Speed: 0 = the full speed of the servo. Motor-off delay: 0 = hold forever, else 500 or more.</p>
+    <h2 style="margin-top:16px">Backup</h2>
+    <div class="row">
+      <button id="export" class="dev" disabled>Export settings to a file</button>
+      <button id="import" class="dev" disabled>Import settings from a file</button>
+      <label class="lab"><input id="importcal" type="checkbox" checked> also the calibration</label>
+      <input id="importfile" type="file" accept=".json,application/json" style="display:none">
+    </div>
+    <div id="setmsg" class="lab" style="margin-top:6px"></div>
+    <p class="lab" style="margin:8px 0 0">The file holds the four settings above, feedback on or off, and the calibration. It holds nothing about the Zigbee network. The import shows the values and asks before it writes them. It does not move the servo. A calibration is correct only for the servo it was made with: for a different servo, clear the box and run Auto calibrate. The import of a calibration needs firmware 1.3.0 or later.</p>
+    <div class="row" style="margin-top:12px">
+      <label><input id="auto" type="checkbox" checked> Auto refresh (each 2 seconds)</label>
+      <span id="refreshed" class="lab"></span>
+    </div>
+    <table id="infotable"></table>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <h2 style="margin:0">History</h2>
+      <span class="lab">Each change of a value in the Device table, newest first. Values that change all the time (voltage, temperature, uptime) are not listed.</span>
+      <button id="clearhist" style="margin-left:auto;padding:6px 12px">Clear</button>
+    </div>
+    <table id="histtable"></table>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const WINDOW_MS = 20000;
+let port, writer, reader, connected = false, motorOn = false, dragging = false, calibrating = false;
+let lo = 400, hi = 2600;
+const data = [];      // {t, cmd, mv} for the chart
+const record = [];    // everything since connect, for the CSV
+let info = [];        // answer to "info", collected until "I end"
+let calibrated = false;
+
+// The Device table: one fixed row for each value, in this order, with a short explanation.
+// A value the board did not send this time keeps its last text, so no row comes and goes.
+const FIELDS = [
+  ['firmware', 'Version of the firmware on the board.'],
+  ['status', 'ok, moving, blocked, no feedback (no signal on the wire), moved by hand, calibrating, or test (Motor ON).'],
+  ['position_percent', 'Where the cover is now: 0 % = open, 100 % = closed.'],
+  ['target_percent', 'Where the last command told the cover to go.'],
+  ['servo_min_us', 'Servo pulse for the open position (0 %).'],
+  ['servo_max_us', 'Servo pulse for the closed position (100 %).'],
+  ['move_speed_ms', 'Time for each 1 % of travel. Larger = slower. 0 = the full speed of the servo.'],
+  ['idle_timeout_ms', 'The servo signal stops this long after a move. 0 = hold forever.'],
+  ['feedback', 'Whether the feedback wire is used. Saved in flash.'],
+  ['feedback_mv', 'Voltage on the feedback wire now, in millivolts.'],
+  ['feedback_position', 'Position calculated from the feedback voltage. "unknown" = feedback off, no calibration, or no signal.'],
+  ['calibration', '"valid" = a calibration is saved in flash. "none" = run Auto calibrate.'],
+  ['cal_low', 'Calibration: the shortest pulse the servo follows, and the feedback voltage there.'],
+  ['cal_high', 'Calibration: the longest pulse the servo follows, and the feedback voltage there.'],
+  ['boot_count', 'Number of starts of the board.'],
+  ['reset_reason', 'Why the board last started: 1 = power on, 3 = software, 4 = crash, 9 = low voltage, 11 = USB, 128 = settings were erased.'],
+  ['chip_temperature', 'Temperature of the ESP32 chip. It is warmer than the room.'],
+  ['uptime_s', 'Seconds since the board started.'],
+  ['update_on_trial', '"yes" = a new firmware from an over-the-air update is not confirmed yet.'],
+  ['zigbee_joined', 'Whether the board is on a Zigbee network.'],
+  ['coordinator_answered', 'Whether the coordinator answered a check. Only checked after an update or a press of the button.'],
+  ['zigbee_channel', 'Radio channel of the Zigbee network.'],
+  ['zigbee_pan_id', 'Identifier of the Zigbee network.'],
+  ['zigbee_address', 'Short address of this board on the network.'],
+];
+const QUIET = ['feedback_mv', 'chip_temperature', 'uptime_s'];   // not written to the history
+const SETTINGS = { servo_min_us: 'min', servo_max_us: 'max', move_speed_ms: 'spd', idle_timeout_ms: 'idle' };   // key -> USB command
+const cells = {};     // key -> the table cell that shows its value
+const lastValue = {};
+const lastRaw = {};   // key -> the value as the board sent it
+let importCheck = null;   // the values of an import, compared with the next answer of the board
+
+function infoRow(key, description) {
+  const row = $('infotable').insertRow();
+  row.insertCell().textContent = key.replace(/_/g, ' ');
+  cells[key] = row.insertCell();
+  cells[key].textContent = '–';
+  const d = row.insertCell();
+  d.textContent = description;
+  d.className = 'lab';
+}
+
+function showInfo(entries) {
+  const time = new Date().toLocaleTimeString();
+  for (const [key, raw] of entries) {
+    const value = raw.replace(/_/g, ' ');
+    if (key === 'calibration') calibrated = raw === 'valid';
+    if (!cells[key]) infoRow(key, '');
+    if (lastValue[key] !== undefined && lastValue[key] !== value && !QUIET.includes(key)) {
+      const row = $('histtable').insertRow(0);
+      row.insertCell().textContent = time;
+      row.insertCell().textContent = key.replace(/_/g, ' ');
+      row.insertCell().textContent = lastValue[key] + '  →  ' + value;
+      while ($('histtable').rows.length > 200) $('histtable').deleteRow(-1);
+    }
+    lastValue[key] = value;
+    lastRaw[key] = raw;
+    cells[key].textContent = value;
+    // A setting box follows the device, but not while you type in it
+    const box = SETTINGS[key] && $('set_' + key);
+    if (box && document.activeElement !== box && !box.dataset.dirty) box.value = raw;
+  }
+  $('refreshed').textContent = 'Last update ' + time;
+  if (importCheck) {
+    const wrong = Object.keys(importCheck).filter(k => lastRaw[k] !== importCheck[k]);
+    importCheck = null;
+    setMsg(wrong.length ? 'Import: the board did not take ' + wrong.map(k => k.replace(/_/g, ' ')).join(', ') + '. Look at the values above.'
+                        : 'Import done. The board has all the values of the file.', wrong.length);
+  }
+}
+
+function setMsg(text, warn) { $('setmsg').textContent = text; $('setmsg').className = warn ? 'warn' : 'lab'; }
+const CAL = /^(\d+)_us_(\d+)_mV$/;   // "505_us_2952_mV"
+
+function setState(text) { $('state').textContent = text; }
+function msg(text, warn) { $('msg').textContent = text; $('msg').className = warn ? 'warn' : ''; }
+
+async function send(line) {
+  if (!writer) return;
+  try { await writer.write(new TextEncoder().encode(line + '\n')); } catch (e) { setState('Write error: ' + e.message); }
+}
+
+function enable() {
+  $('connect').disabled = connected;
+  $('disconnect').disabled = !connected;
+  $('on').disabled = !connected || motorOn;
+  $('stop').disabled = !connected;
+  $('speed').disabled = !connected || calibrating;
+  $('cal').disabled = !connected || calibrating;
+  document.querySelectorAll('.dev').forEach(b => b.disabled = !connected || calibrating);
+  $('slider').disabled = !motorOn || calibrating;
+  document.querySelectorAll('.step').forEach(b => b.disabled = !motorOn || calibrating);
+}
+
+function onLine(line) {
+  const p = line.trim().split(/\s+/);
+  if (p[0] === 'T' && p.length >= 6) {
+    const cmd = +p[1], target = +p[2], mv = +p[3];
+    if (![cmd, target, mv, +p[4], +p[5]].every(Number.isFinite)) return;
+    lo = +p[4]; hi = +p[5];
+    const t = performance.now();
+    data.push({ t, cmd, mv });
+    record.push([Math.round(t), cmd, target, mv]);
+    while (data.length && t - data[0].t > WINDOW_MS) data.shift();
+    $('fb').innerHTML = (mv / 1000).toFixed(3) + '<small> V</small>';
+    $('cmd').innerHTML = cmd ? cmd + '<small> µs</small>' : 'off';
+    let mn = 1e9, mx = -1e9;
+    for (let i = data.length - 1; i >= 0 && t - data[i].t < 1000; i--) { mn = Math.min(mn, data[i].mv); mx = Math.max(mx, data[i].mv); }
+    $('noise').innerHTML = (mx - mn) + '<small> mV</small>';
+    const was = motorOn;
+    motorOn = cmd > 0;
+    if (motorOn && !dragging) $('slider').value = target;
+    $('target').textContent = motorOn ? 'target ' + target + ' µs' : 'motor off';
+    if (calibrating && !motorOn && was) { calibrating = false; msg('Calibration stopped.'); enable(); }
+    if (was !== motorOn) enable();
+  } else if (p[0] === 'I') {
+    if (p[1] === 'end') {
+      showInfo(info);
+      info = [];
+    } else if (p.length >= 3) {
+      info.push([p[1], p.slice(2).join(' ')]);
+    }
+  } else if (p[0] === 'C' && p.length >= 5) {
+    calibrating = false;
+    enable();
+    const span = Math.abs(p[4] - p[2]), us = p[3] - p[1];
+    msg('Calibration done and saved.');
+    setTimeout(() => send('info'), 1500);
+    $('calres').textContent = 'Calibration: ' + p[1] + ' µs = ' + (p[2] / 1000).toFixed(3) + ' V, ' + p[3] + ' µs = ' + (p[4] / 1000).toFixed(3) + ' V. Range ' + us + ' µs, ' + (span / 1000).toFixed(3) + ' V, ' + (span / us).toFixed(3) + ' mV per µs.';
+  }
+}
+
+async function readLoop() {
+  const decoder = new TextDecoder();
+  let buf = '';
+  reader = port.readable.getReader();
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) { onLine(buf.slice(0, i)); buf = buf.slice(i + 1); }
+    }
+    setState('Not connected');
+  } catch (e) { setState('Disconnected: ' + e.message); }
+  // Release everything, so that another program can use the port
+  try { reader.releaseLock(); } catch (e) {}
+  try { if (writer) writer.releaseLock(); } catch (e) {}
+  try { await port.close(); } catch (e) {}
+  reader = null; writer = null;
+  connected = false; motorOn = false; calibrating = false;
+  enable();
+}
+
+$('connect').onclick = async () => {
+  if (!('serial' in navigator)) { setState('This browser has no Web Serial. Use a Chromium-based browser, such as Brave or Chrome. In Brave, switch it on in brave://flags.'); return; }
+  try {
+    port = await navigator.serial.requestPort({ filters: [{ usbVendorId: 0x303a }] });
+    await port.open({ baudRate: 115200 });
+    writer = port.writable.getWriter();
+    connected = true;
+    setState('Connected');
+    enable();
+    send('v ' + $('speed').value);
+    send('info');
+    readLoop();
+  } catch (e) { setState('Could not connect: ' + e.message); }
+};
+
+// The motor is switched off first: the board must not keep a moving servo with nobody connected
+$('disconnect').onclick = async () => {
+  await send('off');
+  if (reader) { try { await reader.cancel(); } catch (e) {} }
+};
+
+const later = () => setTimeout(() => send('info'), 600);
+$('info').onclick = () => send('info');
+$('fbon').onclick = () => { send('fb 1'); later(); };
+$('fboff').onclick = () => { send('fb 0'); later(); };
+$('seto').onclick = () => { send('seto'); later(); };
+$('setc').onclick = () => { send('setc'); later(); };
+document.querySelectorAll('.setting').forEach(box => box.oninput = () => { box.dataset.dirty = '1'; });
+document.querySelectorAll('.fromslider').forEach(b => b.onclick = () => {
+  const box = $('set_' + b.dataset.key);
+  box.value = Math.max(500, Math.min(2500, Math.round(+$('slider').value)));
+  box.dataset.dirty = '1';
+});
+document.querySelectorAll('.saveset').forEach(b => b.onclick = () => {
+  const box = $('set_' + b.dataset.key);
+  if (box.value === '' || isNaN(+box.value)) return;
+  send(SETTINGS[b.dataset.key] + ' ' + Math.max(0, Math.round(+box.value)));
+  delete box.dataset.dirty;    // the box then shows what the device really saved
+  later();
+});
+
+// Backup: the settings as a small JSON file. Nothing about the Zigbee network goes into it.
+$('export').onclick = () => {
+  if (lastRaw.servo_min_us === undefined) { setMsg('No values from the board yet. Press Refresh first.', true); return; }
+  const out = { device: 'espServoBlind', firmware: lastRaw.firmware };
+  for (const key in SETTINGS) out[key] = +lastRaw[key];
+  out.feedback = lastRaw.feedback;
+  const l = CAL.exec(lastRaw.cal_low || ''), h = CAL.exec(lastRaw.cal_high || '');
+  out.calibration = lastRaw.calibration === 'valid' && l && h ? { low_us: +l[1], low_mv: +l[2], high_us: +h[1], high_mv: +h[2] } : null;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(out, null, 2) + '\n'], { type: 'application/json' }));
+  a.download = 'espServoBlind-settings.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  setMsg('Exported to espServoBlind-settings.json.');
+};
+
+$('import').onclick = () => { $('importfile').value = ''; $('importfile').click(); };
+$('importfile').onchange = async () => {
+  const file = $('importfile').files[0];
+  if (!file) return;
+  let cfg;
+  try { cfg = JSON.parse(await file.text()); } catch (e) { setMsg('This file is not a settings file: ' + e.message, true); return; }
+  if (!cfg || cfg.device !== 'espServoBlind') { setMsg('This file is not an espServoBlind settings file.', true); return; }
+  const whole = v => Number.isInteger(v) && v >= 0 && v <= 65535;
+  const lines = [], text = [], expect = {};
+  for (const key in SETTINGS) {
+    if (cfg[key] === undefined) continue;
+    if (!whole(cfg[key])) { setMsg('The file has a wrong value for ' + key + '.', true); return; }
+    lines.push(SETTINGS[key] + ' ' + cfg[key]);
+    text.push(key.replace(/_/g, ' ') + ': ' + cfg[key]);
+    expect[key] = String(cfg[key]);
+  }
+  if (cfg.feedback === 'on' || cfg.feedback === 'off') {
+    lines.push('fb ' + (cfg.feedback === 'on' ? 1 : 0));
+    text.push('feedback: ' + cfg.feedback);
+    expect.feedback = cfg.feedback;
+  }
+  const c = cfg.calibration;
+  if (c && $('importcal').checked) {
+    if (![c.low_us, c.low_mv, c.high_us, c.high_mv].every(whole)) { setMsg('The file has a wrong calibration.', true); return; }
+    lines.push('calset ' + c.low_us + ' ' + c.low_mv + ' ' + c.high_us + ' ' + c.high_mv);
+    text.push('calibration: ' + c.low_us + ' us = ' + c.low_mv + ' mV, ' + c.high_us + ' us = ' + c.high_mv + ' mV');
+    expect.cal_low = c.low_us + '_us_' + c.low_mv + '_mV';
+    expect.cal_high = c.high_us + '_us_' + c.high_mv + '_mV';
+  }
+  if (!lines.length) { setMsg('The file has no settings.', true); return; }
+  if (!confirm('Write these values to the board?\n\n' + text.join('\n') + '\n\nThe servo does not move.')) { setMsg('Import cancelled.'); return; }
+  for (const line of lines) { await send(line); await new Promise(r => setTimeout(r, 250)); }
+  document.querySelectorAll('.setting').forEach(box => delete box.dataset.dirty);
+  importCheck = expect;
+  later();
+};
+
+$('go').onclick = () => { send('pos ' + Math.max(0, Math.min(100, Math.round(+$('pct').value || 0)))); };
+
+$('cal').onclick = () => {
+  calibrating = true;
+  enable();
+  msg('Calibrating: the servo moves slowly to both ends. STOP cancels it.');
+  send('cal');
+};
+
+$('on').onclick = () => {
+  // With a calibration the motor starts exactly where the servo is. Without one the position
+  // is not known, and the servo jumps to the centre.
+  if (!calibrated && !confirm('The position of the servo is not known, because it is not calibrated. '
+      + 'Motor ON will move it to the centre (1500 µs) at full speed. '
+      + 'Auto calibrate also starts from the centre the first time. Continue?')) return;
+  msg('');
+  send('on');
+};
+
+// The Device table refreshes by itself
+setInterval(() => { if (connected && !calibrating && $('auto').checked) send('info'); }, 2000);
+$('clearhist').onclick = () => { $('histtable').innerHTML = ''; };
+FIELDS.forEach(([key, description]) => infoRow(key, description));
+$('stop').onclick = () => send('off');
+$('speed').onchange = () => send('v ' + $('speed').value);
+$('slider').oninput = () => { dragging = true; send('t ' + $('slider').value); };
+$('slider').onchange = () => { dragging = false; };
+document.querySelectorAll('.step').forEach(b => b.onclick = () => {
+  const v = Math.max(lo, Math.min(hi, +$('slider').value + +b.dataset.d));
+  $('slider').value = v;
+  send('t ' + v);
+});
+document.addEventListener('keydown', e => { if (e.code === 'Space' || e.code === 'Escape') { e.preventDefault(); send('off'); } });
+
+$('save').onclick = () => {
+  const csv = 'ms,cmd_us,target_us,feedback_mv\n' + record.map(r => r.join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = 'servo_live_' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.csv';
+  a.click();
+};
+
+const cv = $('chart'), ctx = cv.getContext('2d');
+function draw() {
+  requestAnimationFrame(draw);
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== w * dpr || cv.height !== h * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const css = getComputedStyle(document.documentElement);
+  const L = 44, R = 50, T = 8, B = 8, pw = w - L - R, ph = h - T - B;
+  ctx.font = '12px system-ui'; ctx.textBaseline = 'middle';
+  // Left axis: feedback, fitted to the data with a minimum span so that noise is not blown up
+  let mn = 1e9, mx = -1e9;
+  for (const d of data) { mn = Math.min(mn, d.mv); mx = Math.max(mx, d.mv); }
+  if (!data.length) { mn = 0; mx = 3300; }
+  if (mx - mn < 200) { const c = (mx + mn) / 2; mn = c - 100; mx = c + 100; }
+  const pad = (mx - mn) * 0.08; mn -= pad; mx += pad;
+  for (let i = 0; i <= 4; i++) {
+    const y = T + ph * i / 4;
+    ctx.strokeStyle = css.getPropertyValue('--grid'); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(L + pw, y); ctx.stroke();
+    ctx.fillStyle = css.getPropertyValue('--fb'); ctx.textAlign = 'right';
+    ctx.fillText(((mx - (mx - mn) * i / 4) / 1000).toFixed(2), L - 6, y);
+    ctx.fillStyle = css.getPropertyValue('--cmd'); ctx.textAlign = 'left';
+    ctx.fillText(Math.round(2600 - 2200 * i / 4), L + pw + 6, y);
+  }
+  if (data.length < 2) return;
+  const now = data[data.length - 1].t;
+  const x = t => L + pw * (1 - (now - t) / WINDOW_MS);
+  ctx.lineWidth = 2; ctx.lineJoin = 'round';
+  ctx.strokeStyle = css.getPropertyValue('--cmd'); ctx.beginPath();
+  let pen = false;
+  for (const d of data) {
+    if (!d.cmd) { pen = false; continue; }
+    const y = T + ph * (2600 - d.cmd) / 2200;
+    if (pen) ctx.lineTo(x(d.t), y); else ctx.moveTo(x(d.t), y);
+    pen = true;
+  }
+  ctx.stroke();
+  ctx.strokeStyle = css.getPropertyValue('--fb'); ctx.beginPath();
+  data.forEach((d, i) => { const y = T + ph * (mx - d.mv) / (mx - mn); i ? ctx.lineTo(x(d.t), y) : ctx.moveTo(x(d.t), y); });
+  ctx.stroke();
+}
+draw();
+</script>
+</body>
+</html>
